@@ -21,7 +21,7 @@ if __name__ == '__main__':
 
     # reduce training and dev data
     train = train[:1000]
-    dev = dev[:1]
+    dev = dev[:100]
 
     # Set to true to produce final output
     run_on_test = False
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     elif system_to_run == "GREEDY":
         trained_model = train_greedy_model(train)
         print "Parsing dev"
-        # parsed_dev = [trained_model.parse(sent) for sent in dev]
+        parsed_dev = [trained_model.parse(sent) for sent in dev]
         if run_on_test:
             print "Parsing test"
             test = read_data("data/test.conllx.blind")
@@ -58,4 +58,4 @@ if __name__ == '__main__':
             print_output(test_decoded, "test.conllx.out")
     else:
         raise Exception("Pass in either TEST_TRANSITIONS, GREEDY, or BEAM to run the appropriate system")
-    # print_evaluation(dev, parsed_dev)
+    print_evaluation(dev, parsed_dev)

@@ -19,19 +19,66 @@ class GreedyModel(object):
     # The new ParsedSentence should have the same tokens as the original and new dependencies constituting
     # the predicted parse.
     def parse(self, sentence):
-        # raise Exception("IMPLEMENT ME")
-        
         fi = self.feature_indexer
         weights = self.feature_weights
-
         state = initial_parser_state(len(sentence))
+        decisions = []
+        states = [state]
+
+        label_indexer = get_label_indexer()
 
         while not state.is_finished():
-            
+            argmax = [np.NINF, np.NINF, np.NINF]
+            possible_actions = get_possible_actions(state)
+            denominator = np.NINF
 
+            # calculate denominator
+            for decision in possible_actions:
+                y_prime = label_indexer.index_of(decision)
+                feat = extract_features(fi, sentence, state, decision, False)
+                tmp = score_indexed_features(feat, weights)
+                new_state = state.take_action(decision)
 
-        
+                if new_state.is_legal():
+                    denominator = np.logaddexp(denominator, tmp)
 
+            # calculate numerator
+            for decision in possible_actions:
+                d_id = label_indexer.index_of(decision)
+                new_state = state.take_action(decision)
+
+                if new_state.is_legal():
+                    feat = extract_features(fi, sentence, state, decision, False)
+                    numerator = score_indexed_features(feat, weights)
+                    prob = numerator - denominator
+                    argmax[d_id] = prob
+
+            decision = label_indexer.get_object(np.argmax(argmax))
+            prob = np.amax(argmax)
+
+            # tiebreak
+            if argmax[0] == argmax[1] == argmax[2]:
+                choice = random.choice([0,1,2])
+                decision = label_indexer.get_object(choice)
+                prob = argmax[choice]
+            elif argmax[0] == argmax[1] and argmax[0] > argmax[2]:
+                choice = random.choice([0,1])
+                decision = label_indexer.get_object(choice)
+                prob = argmax[choice]
+            elif argmax[0] == argmax[2] and argmax[0] > argmax[1]:
+                choice = random.choice([0,2])
+                decision = label_indexer.get_object(choice)
+                prob = argmax[choice]
+            elif argmax[1] == argmax[2] and argmax[0] < argmax[1]:
+                choice = random.choice([1,2])
+                decision = label_indexer.get_object(choice)
+                prob = argmax[choice]
+
+            prob = np.exp(prob)
+            new_state = state.take_action(decision)
+            states.append(new_state)
+            decisions.append(decision)
+            state = new_state
 
         dependencies = states[-1].get_dep_objs(len(sentence))
         return ParsedSentence(sentence.tokens, dependencies)
@@ -190,8 +237,10 @@ def get_features(feature_cache, s_id, state_id, d_id):
 def get_possible_actions(state):
     possible_actions = []
 
+    if len(state.stack) < 2 and state.buffer_len() > 0:
+        possible_actions = ['S']
     # can only go left or right if buffer is empty
-    if state.buffer_len() == 0:
+    elif state.buffer_len() == 0:
         # if stack only contains root and another element, right arc
         if len(state.stack) == 2 and state.stack_two_back() == ROOT:
             possible_actions = ['R']
@@ -256,50 +305,6 @@ def train_greedy_model(parsed_sentences):
 
                 state_indexer.get_index((str(gold_state), decision))
 
-        # for s in xrange(len(state_indexer)):
-        #     print state_indexer.get_object(s)
-
-        # for key in feature_cache.keys():
-        #     print feature_cache
-
-        # print 'sentence:', s_id, 'words:', len(sentence), 'feature_indexer:', len(feature_indexer), 'feature_cache:', len(feature_cache), 'states:', len(state_indexer)
-
-        # while not state.is_finished():
-            # if len(state.stack) < 2 and state.buffer_len() > 0:
-            #     decision = 'S'
-            #     d_id = label_indexer.index_of(decision)
-            #     new_state = state.take_action(decision)                
-
-            #     # only extract features if state is legal
-            #     if new_state.is_legal():
-            #         state_id = state_indexer.get_index((decision, str(state)))
-            #         feat = extract_features(feature_indexer, sentence, state, decision, True)
-            #         feature_cache[(s_id, state_id, d_id)] = feat
-            #         state = new_state
-            #     else:
-            #         feature_cache[(s_id, state_id, d_id)] = []
-            # else:
-            #     possible_actions = []
-            #     # cannot shift if buffer is empty
-            #     if state.buffer_len() == 0:
-            #         if len(state.stack) == 2 and state.stack_two_back() == -1: # only root and another element
-            #             possible_actions = ['R']
-            #         else:
-            #             possible_actions = ['L', 'R']
-            #     else:
-            #         possible_actions = ['S', 'L', 'R']
-
-            #     for decision in possible_actions:
-            #         d_id = label_indexer.index_of(decision)
-            #         state_id = state_indexer.get_index((decision, str(state)))
-            #         new_state = state.take_action(decision)
-
-            #         # only extract features if state is legal
-            #         if new_state.is_legal():
-            #             feat = extract_features(feature_indexer, sentence, state, decision, True)
-            #             feature_cache[(s_id, state_id, d_id)] = feat
-            #             state = new_state
-
         sentence_states[s_id] = state_indexer
 
     weights = np.zeros(shape=(len(feature_indexer),))
@@ -311,69 +316,27 @@ def train_greedy_model(parsed_sentences):
     parsed_dev = []
     num_epochs = 10
 
-    for s_id, sentence in enumerate(parsed_sentences):
-        if s_id % 100 == 0:
-            print "Training:", s_id, "/", len(parsed_sentences)
+    for epoch in xrange(num_epochs):
+        for s_id, sentence in enumerate(parsed_sentences):
+            if s_id % 100 == 0:
+                print "Training:", s_id, "/", len(parsed_sentences)
 
-        state = initial_parser_state(len(sentence)) # initial state for each sentence
+            state = initial_parser_state(len(sentence)) # initial state for each sentence
 
-        decisions = []
-        states = [state]
-        gold_state = gold_states[s_id] # gold state for each sentence
-        gold_decision = gold_decisions[s_id]
-        state_indexer = sentence_states[s_id]
-        # gold_decision.insert(0, 'S')
+            decisions = []
+            states = [state]
+            gold_state = gold_states[s_id] # gold state for each sentence
+            gold_decision = gold_decisions[s_id]
+            state_indexer = sentence_states[s_id]
 
-        # print len(gold_decision)
-        # print len(gold_state)
+            while not state.is_finished():
+                # raw_input("press enter")
+                # print state
 
-        while (not state.is_finished()): #and (len(decisions) < len(gold_decision)):
-            # raw_input("press enter")
-            # print state
-
-            # first decision should be shift
-            # calculate argmax of S, L, R
-            argmax = [np.NINF, np.NINF, np.NINF]
-            decision = ''
-            prob = 0
-            feats = []            
-
-            if len(state.stack) < 2 and state.buffer_len() > 0:
-                # print "SHIFT"
-                decision = 'S'
-                d_id = label_indexer.index_of(decision)
-                new_state = state.take_action(decision)
-
-                if new_state.is_legal():
-                    # argmax[d_id] = 1.0
-                    argmax[d_id] = 0
-                    # prob = 1
-                    # states.append(new_state)
-                    # decisions.append(decision)
-
-                    # # update state
-                    # state = new_state 
-                
-            else:
+                # first decision should be shift
+                # calculate argmax of S, L, R
+                argmax = [np.NINF, np.NINF, np.NINF]
                 possible_actions = get_possible_actions(state)
-
-                # can only go left or right if buffer is empty
-                # if state.buffer_len() == 0:
-                #     # if stack only contains root and another element, right arc
-                #     if len(state.stack) == 2 and state.stack_two_back() == ROOT:
-                #         possible_actions = ['R']
-                #     else:
-                #         possible_actions = ['L', 'R']
-                # else:
-                #     # root already has child (root can only have 1 child)
-                #     one_back = state.stack_head()
-                #     two_back = state.stack_two_back()
-
-                #     if two_back == ROOT and ROOT in state.deps.values(): # cannot attach another child to ROOT
-                #         possible_actions = ['S']
-                #     else:
-                #         possible_actions = ['S', 'L', 'R']
-
                 denominator = np.NINF
                 # print possible_actions
 
@@ -406,103 +369,74 @@ def train_greedy_model(parsed_sentences):
                         # calculate probability
                         # P(y|x) = exp(wT . f(x,y)) / sum(exp(wT . f(x,y'))) over y' in decisions
                         numerator = score_indexed_features(feats, weights)
-                        # print decision, np.exp(numerator), denominator, possible_actions
-                        # prob = np.exp(numerator) / denominator
                         prob = numerator - denominator
                         argmax[d_id] = prob
 
-            print s_id, state_id, argmax, sum([np.exp(a) for a in argmax])
-            # choose the most possible action
-            decision = label_indexer.get_object(np.argmax(argmax))
-            prob = np.amax(argmax)
+                # print s_id, state_id, argmax, sum([np.exp(a) for a in argmax])
+                # choose the most possible action
+                decision = label_indexer.get_object(np.argmax(argmax))
+                prob = np.amax(argmax)
 
-            # in case of no max val
-            if argmax[0] == argmax[1] == argmax[2]:
-                choice = random.choice([0,1,2])
-                decision = label_indexer.get_object(choice)
-                prob = argmax[choice]
-            elif argmax[0] == argmax[1] and argmax[0] > argmax[2]:
-                choice = random.choice([0,1])
-                decision = label_indexer.get_object(choice)
-                prob = argmax[choice]
-            elif argmax[0] == argmax[2] and argmax[0] > argmax[1]:
-                choice = random.choice([0,2])
-                decision = label_indexer.get_object(choice)
-                prob = argmax[choice]
-            elif argmax[1] == argmax[2] and argmax[0] < argmax[1]:
-                choice = random.choice([1,2])
-                decision = label_indexer.get_object(choice)
-                prob = argmax[choice]
-            
-            prob = np.exp(prob)
-            new_state = state.take_action(decision)
-            # print "decision:", decision
-
-            # if new_state.is_legal():
-            states.append(new_state)
-            decisions.append(decision)
-            # print "state", state
-            # print "decision", decision
-            # print "new state", new_state
-            state = new_state
-            # else:
-            #     continue
-            
-            # return
-
-            gradient = Counter()
-            expected = Counter()
-
-            # check the gold state and update weights
-            tmp_gold_state = gold_state[:len(states)] # get list of gold states with length of current list of states
-            tmp_gold_decision = gold_decision[:len(decisions)]
-            # print "gold state", tmp_gold_state
-            # print "state", states
-
-            # print len(tmp_gold_state), len(tmp_gold_decision)
-            # print "gold_decisions", tmp_gold_decision
-            # print "decision", decisions
-            # print "gold state", tmp_gold_state[-1]
-            # print "state", states[-1]
-            # print '\n\n'
-
-            # training
-            # len(decision) < len(state) (by 1)
-            for i in xrange(len(tmp_gold_decision)):
-                gd = tmp_gold_decision[i]
-                gs = str(tmp_gold_state[i])
-
-                d_id = label_indexer.index_of(gd)
-                state_id = state_indexer.index_of((gs, gd))
-
-                # if (s_id, state_id, d_id) in feature_cache.keys():
-                #     feats = feature_cache[(s_id, state_id, d_id)]
-                feats = get_features(feature_cache, s_id, state_id, d_id)
-                gradient.increment_all(feats, 1)
-
-            for i in xrange(len(decisions)):
-                gd = decisions[i]
-                gs = str(states[i])
+                # in case of no max val
+                if argmax[0] == argmax[1] == argmax[2]:
+                    choice = random.choice([0,1,2])
+                    decision = label_indexer.get_object(choice)
+                    prob = argmax[choice]
+                elif argmax[0] == argmax[1] and argmax[0] > argmax[2]:
+                    choice = random.choice([0,1])
+                    decision = label_indexer.get_object(choice)
+                    prob = argmax[choice]
+                elif argmax[0] == argmax[2] and argmax[0] > argmax[1]:
+                    choice = random.choice([0,2])
+                    decision = label_indexer.get_object(choice)
+                    prob = argmax[choice]
+                elif argmax[1] == argmax[2] and argmax[0] < argmax[1]:
+                    choice = random.choice([1,2])
+                    decision = label_indexer.get_object(choice)
+                    prob = argmax[choice]
                 
-                d_id = label_indexer.index_of(gd)
-                state_id = state_indexer.index_of((gs, gd))
+                prob = np.exp(prob)
+                new_state = state.take_action(decision)
+                states.append(new_state)
+                decisions.append(decision)
+                state = new_state
 
-                # if (s_id, state_id, d_id) in feature_cache.keys():
-                #     feats = feature_cache[(s_id, state_id, d_id)]
-                feats = get_features(feature_cache, s_id, state_id, d_id)
-                # expected.increment_all(feats, -argmax[d_id])
-                expected.increment_all(feats, -np.exp(argmax[d_id]))
+                gradient = Counter()
+                expected = Counter()
 
-            gradient.add(expected)
+                # check the gold state and update weights
+                tmp_gold_state = gold_state[:len(states)] # get list of gold states with length of current list of states
+                tmp_gold_decision = gold_decision[:len(decisions)]
 
-            for i in gradient.keys():
-                # print "update weight", i
-                weights[i] += 0.01 * gradient.get_count(i)
+                # training
+                # len(decision) < len(state) (by 1)
+                for i in xrange(len(tmp_gold_decision)):
+                    gd = tmp_gold_decision[i]
+                    gs = str(tmp_gold_state[i])
 
-        # end while
-        parsed_dev.append(ParsedSentence(sentence.tokens, states[-1].get_dep_objs(len(sentence))))
+                    d_id = label_indexer.index_of(gd)
+                    state_id = state_indexer.index_of((gs, gd))
+                    feats = get_features(feature_cache, s_id, state_id, d_id)
+                    gradient.increment_all(feats, 1)
 
-    print_evaluation(parsed_sentences, parsed_dev)
+                for i in xrange(len(decisions)):
+                    gd = decisions[i]
+                    gs = str(states[i])
+                    
+                    d_id = label_indexer.index_of(gd)
+                    state_id = state_indexer.index_of((gs, gd))
+                    feats = get_features(feature_cache, s_id, state_id, d_id)
+                    expected.increment_all(feats, -np.exp(argmax[d_id]))
+
+                gradient.add(expected)
+
+                for i in gradient.keys():
+                    weights[i] += 0.01 * gradient.get_count(i)
+
+            # end while            
+            # parsed_dev.append(ParsedSentence(sentence.tokens, states[-1].get_dep_objs(len(sentence))))
+
+    # print_evaluation(parsed_sentences, parsed_dev)
 
     return GreedyModel(feature_indexer, weights)
 
