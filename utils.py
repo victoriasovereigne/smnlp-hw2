@@ -76,9 +76,19 @@ class Counter(object):
     def set_count(self, obj, count):
         self.counter[obj] = count
 
+    def set_all(self, objs_list, count):
+        for obj in objs_list:
+            self.set_count(obj, count)
+
     def add(self, otherCounter):
         for key in otherCounter.counter.keys():
             self.increment_count(key, otherCounter.counter[key])
+
+    def total(self):
+        total = 0
+        for key in self.counter.keys():
+            total += self.counter[key]
+        return total
 
     # Bad O(n) implementation right now
     def argmax(self):

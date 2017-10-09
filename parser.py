@@ -9,7 +9,7 @@ if __name__ == '__main__':
     # Load the training and test data
     print "Reading train data..."
     train = read_data("data/train.conllx")
-    shuffle(train)
+    # shuffle(train)
     print "Kept " + repr(len(train)) + " exs"
     print "Reading dev data..."
     dev = read_data("data/dev.conllx")
@@ -21,7 +21,10 @@ if __name__ == '__main__':
 
     # reduce training and dev data
     train = train[:1000]
-    dev = dev[:100]
+    dev = train[:100]
+
+    # print train[0]
+    # print dev[0]
 
     # Set to true to produce final output
     run_on_test = False
