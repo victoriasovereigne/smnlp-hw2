@@ -87,7 +87,7 @@ def print_evaluation(gold_parsed_sentences, guess_parsed_sentences):
     for gold, guess in zip(gold_parsed_sentences, guess_parsed_sentences):
         for index in xrange(0, len(gold)):
             if len(gold.get_deps()) != len(guess.get_deps()):
-                print "FUCK"
+                print "FUCK", len(gold.get_deps()), len(guess.get_deps())
             if gold.get_deps()[index] == guess.get_deps()[index]:
                 correct_labeled += 1
                 correct_unlabeled += 1

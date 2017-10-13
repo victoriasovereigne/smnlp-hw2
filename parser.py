@@ -3,7 +3,7 @@
 import sys
 from models import *
 from random import shuffle
-
+import time
 
 if __name__ == '__main__':
     # Load the training and test data
@@ -20,8 +20,8 @@ if __name__ == '__main__':
     # print str(dev[5])
 
     # reduce training and dev data
-    train = train[:1000]
-    dev = train[:100]
+    # train = train #[:1000]
+    # dev = dev #train
 
     # print train[0]
     # print dev[0]
@@ -42,7 +42,11 @@ if __name__ == '__main__':
             print parsed_dev
             
     elif system_to_run == "GREEDY":
+        start = time.time()
         trained_model = train_greedy_model(train)
+        end = time.time()
+        print "Training time:", (end - start)
+        
         print "Parsing dev"
         parsed_dev = [trained_model.parse(sent) for sent in dev]
         if run_on_test:

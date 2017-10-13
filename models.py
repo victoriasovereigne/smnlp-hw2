@@ -21,58 +21,35 @@ class GreedyModel(object):
     def parse(self, sentence):
         fi = self.feature_indexer
         weights = self.feature_weights
-        # print weights
         state = initial_parser_state(len(sentence))
         decisions = []
-        states = [state]
+        states = []
 
         label_indexer = get_label_indexer()
 
         while not state.is_finished():
-            # raw_input("parse")
-
-            argmax = [np.NINF, np.NINF, np.NINF]
+            log_probs = [np.NINF, np.NINF, np.NINF]
             possible_actions = get_possible_actions(state)
-            denominator = np.NINF
 
-            # calculate denominator
-            for decision in possible_actions:
-                y_prime = label_indexer.index_of(decision)
-                feat = extract_features(fi, sentence, state, decision, False)
-                tmp = score_indexed_features(feat, weights)
-                new_state = state.take_action(decision)
+            for i, y_decision in enumerate(possible_actions):
+                next_state = state.take_action(y_decision)
+                d_id = label_indexer.index_of(y_decision)
 
-                # print "decision", decision, "feat", feat
+                if next_state.is_legal():
+                    feats = extract_features(fi, sentence, state, y_decision, False)
+                    numerator = score_indexed_features(feats, weights)
+                    log_probs[d_id] = numerator
 
-                if new_state.is_legal():
-                    denominator = np.logaddexp(denominator, tmp)
+            log_probs = log_probs - logaddexp(log_probs)            
+            decision = label_indexer.get_object(get_argmax(log_probs))
+            next_state = state.take_action(decision)
 
-            # print "denominator", denominator
+            if next_state.is_legal():
+                states.append(state)
+                decisions.append(decision)
+                state = next_state
 
-            # calculate numerator
-            for decision in possible_actions:
-                d_id = label_indexer.index_of(decision)
-                new_state = state.take_action(decision)
-
-                if new_state.is_legal():
-                    feat = extract_features(fi, sentence, state, decision, False)
-                    numerator = score_indexed_features(feat, weights)
-                    prob = numerator - denominator
-                    argmax[d_id] = prob
-
-            # print "numerator", numerator, "feat", feat
-
-            decision = label_indexer.get_object(np.argmax(argmax))
-            prob = np.amax(argmax)
-
-            # print [np.exp(a) for a in argmax], decision, state
-
-            prob = np.exp(prob)
-            new_state = state.take_action(decision)
-            states.append(new_state)
-            decisions.append(decision)
-            state = new_state
-
+        states.append(state) # add last state
         dependencies = states[-1].get_dep_objs(len(sentence))
         return ParsedSentence(sentence.tokens, dependencies)
 
@@ -227,6 +204,14 @@ def get_features(feature_cache, s_id, state_id, d_id):
     else:
         return []
 
+def get_features_state(feature_cache, state_indexer, s_id, state, d_id):
+    state_id = state_indexer.index_of(str(state))
+    if state_id != -1:
+        return feature_cache[s_id][state_id][d_id]
+    else:
+        return []
+
+
 def get_possible_actions(state):
     possible_actions = []
 
@@ -252,7 +237,28 @@ def get_possible_actions(state):
     return possible_actions
 
 
+def get_argmax(argmax):
+    if argmax[0] == argmax[1] == argmax[2]:
+        return random.choice([0,1,2])
+    elif argmax[0] == argmax[1] and argmax[0] > argmax[2]:
+        return random.choice([0,1])
+    elif argmax[0] == argmax[2] and argmax[0] > argmax[1]:
+        return random.choice([0,1])
+    elif argmax[1] == argmax[2] and argmax[1] > argmax[0]:
+        return random.choice([1,2])
+    else:
+        return np.argmax(argmax)
+
+def logaddexp(array):
+    tmp = array[0]
+    for element in array[1:]:
+        tmp = np.logaddexp(tmp, element)
+
+    return tmp
+
+# ======================================================
 # Returns a GreedyModel trained over the given treebank.
+# ======================================================
 def train_greedy_model(parsed_sentences):
     feature_indexer = Indexer()
     label_indexer = get_label_indexer()
@@ -269,47 +275,48 @@ def train_greedy_model(parsed_sentences):
 
     # ======================================================
     # extract features
-    # ======================================================    
-    sentence_states = {}
-    feature_cache = {}
+    # ======================================================
+    feature_cache = [[[[] for k in xrange(3)] for j in xrange(len(gold_states[i]))] for i in xrange(len(parsed_sentences))]
+    state_indexers = []
+    feature_cache2 = {}
 
     for s_id, sentence in enumerate(parsed_sentences):
         if s_id % 100 == 0:
             print "Extracting features:", s_id, "/", len(parsed_sentences)
 
         state = initial_parser_state(len(sentence))
-        state_indexer = Indexer()
         curr_gold_decisions = gold_decisions[s_id]
         curr_gold_states = gold_states[s_id]
+        state_indexer = Indexer()
         i = 0
 
         while not state.is_finished():
-            # raw_input('state')
             gold_decision = curr_gold_decisions[i]
             d_id = label_indexer.index_of(gold_decision)
-            state_id = state_indexer.get_index((str(state), gold_decision))
+            possible_actions = get_possible_actions(state)
 
-            key = (s_id, state_id, d_id)
-            feats = extract_features(feature_indexer, sentence, state, gold_decision, True)
-            feature_cache[key] = feats
+            for decision in possible_actions:
+                d_id = label_indexer.index_of(decision)
+                key = (s_id, str(state), d_id)
+                tmp_state = state.take_action(decision)
 
-            # print state
-            # print curr_gold_states[i]
+                if tmp_state.is_legal():
+                    state_id = state_indexer.get_index(str(state))
+                    feats = extract_features(feature_indexer, sentence, state, decision, True)
+                    feature_cache[s_id][state_id][d_id] = feats
             
             next_state = state.take_action(gold_decision)
             state = next_state
             i += 1
 
-        sentence_states[s_id] = state_indexer
+        state_indexers.append(state_indexer)
 
-    weights = np.ones(shape=(len(feature_indexer),))
-    # return
+    weights = np.zeros(shape=(len(feature_indexer),))
 
     # ======================================================
     # build a classifier (logistic regression)
     # ======================================================
-    parsed_dev = []
-    num_epochs = 1
+    num_epochs = 15
 
     for epoch in xrange(num_epochs):
         for s_id, sentence in enumerate(parsed_sentences):
@@ -318,145 +325,67 @@ def train_greedy_model(parsed_sentences):
 
             state = initial_parser_state(len(sentence))
             decisions = []
-            states = [state]
+            states = []
             sentence_gold_states = gold_states[s_id]
-            sentence_gold_decisions = gold_decisions[s_id] 
-            state_indexer = sentence_states[s_id]
-            state_id = state_indexer.index_of((str(state), 'S'))
-            index = 0
+            sentence_gold_decisions = gold_decisions[s_id]
+            index = 0 
+            state_indexer = state_indexers[s_id]            
 
             while not state.is_finished():
-                # first decision should be shift
-                # calculate argmax of S, L, R
-                argmax = [np.NINF, np.NINF, np.NINF]
                 possible_actions = get_possible_actions(state)
-                denominator = np.NINF
-
+                log_probs = [np.NINF, np.NINF, np.NINF] 
+                # ======================================================
                 # calculate numerator and denominator
+                # P(y|x) = exp(wT . f(x,y)) / sum(exp(wT . f(x,y'))) over y' in decisions
+                # log P(y|x) = (wt . f(x,y)) - logaddexp(wT . f(x,y')) over y'
+                # ======================================================
                 for i, y_decision in enumerate(possible_actions):
-                    numerator = np.NINF
                     d_id = label_indexer.index_of(y_decision)
                     next_state = state.take_action(y_decision)
 
-                    # calculate numerator functions
                     if next_state.is_legal():
-                        state_id = state_indexer.index_of((str(state), y_decision))
-                        # print "State ID", state_id, state, y_decision
-                        # print next_state
-                        feats = get_features(feature_cache, s_id, state_id, d_id)
-                        # calculate probability
-                        # P(y|x) = exp(wT . f(x,y)) / sum(exp(wT . f(x,y'))) over y' in decisions
+                        feats = get_features_state(feature_cache, state_indexer, s_id, state, d_id)
                         numerator = score_indexed_features(feats, weights)
-                        denominator = numerator
-                        # calculate denominator
-                        popped = list(possible_actions)
-                        popped.pop(i)
-                        # print possible_actions, popped
+                        log_probs[d_id] = numerator 
 
-                        for j, y_prime in enumerate(popped):
-                            state_id2 = state_indexer.index_of((str(state), y_prime))
-                            d_id2 = label_indexer.index_of(y_prime)
-                            feats2 = get_features(feature_cache, s_id, state_id2, d_id2)
-                            tmp = score_indexed_features(feats2, weights)
-                            tmp_state = state.take_action(y_prime)
-                            
-                            if tmp_state.is_legal():
-                                denominator = np.logaddexp(denominator, tmp)          
-
-                        prob = numerator - denominator
-                        # print state_id, prob, numerator, denominator
-                        argmax[d_id] = prob
-
-                # print [np.exp(a) for a in argmax]
-                decision = label_indexer.get_object(np.argmax(argmax))
-                decisions.append(decision)
-                next_state = state.take_action(decision)
-                states.append(next_state)
-
-                
                 # ======================================================
-                # compute log likelihood
+                # calculate argmax of log probability to make decision
+                # ======================================================
+                denominator = logaddexp(log_probs)
+                log_probs = log_probs - denominator 
+                decision = label_indexer.get_object(get_argmax(log_probs))
+                gold_decision = sentence_gold_decisions[index]
+                next_state = state.take_action(gold_decision)
+
+                # ======================================================
                 # compute gradient
                 # ======================================================
-                # gold features
-                gold_features = Counter()
-                # expected_features = Counter()
                 gradient = Counter()
-                # prob_features = Counter()
-                state_id = state_indexer.index_of((str(state), sentence_gold_decisions[index]))
+                expected = Counter()
+                gold_id = label_indexer.index_of(gold_decision)
+                fxy_star = get_features_state(feature_cache, state_indexer, s_id, state, gold_id)#get_features_state(feature_cache, s_id, str(state), gold_id)
+                gradient.increment_all(fxy_star, 1)
 
-                # print index, state_id
-                # print "state", state
-                # print "state indexer", state_indexer.get_object(state_id)
-                # print "gold decision", sentence_gold_decisions[index]
-                # print "predicted decision", decision
-                
-                y_star_id = label_indexer.index_of(sentence_gold_decisions[index])
-                gold_feats = get_features(feature_cache, s_id, index, y_star_id)
-                gold_tmp = score_indexed_features(gold_feats, weights)
-                gold_features.increment_all(gold_feats, gold_tmp)
-                
-                # predicted S
-                pred_s = Counter()
-                prob_s = Counter()
-                s_feats = get_features(feature_cache, s_id, index, 0)
-                s_tmp = score_indexed_features(s_feats, weights)
-                prob_s.increment_all(s_feats, -np.exp(argmax[0]))
-                pred_s.increment_all(s_feats, np.exp(s_tmp))
+                for d_id2 in xrange(len(label_indexer)):
+                    fxy = get_features_state(feature_cache, state_indexer, s_id, state, d_id2)
+                    expected.increment_all(fxy, -np.exp(log_probs[d_id2]))
 
-                # predicted L
-                pred_l = Counter()
-                prob_l = Counter()
-                l_feats = get_features(feature_cache, s_id, index, 1)
-                l_tmp = score_indexed_features(l_feats, weights)
-                prob_l.increment_all(l_feats, -np.exp(argmax[1]))
-                pred_l.increment_all(l_feats, np.exp(l_tmp))
+                gradient.add(expected)
 
-                # predicted R
-                pred_r = Counter()
-                prob_r = Counter()
-                r_feats = get_features(feature_cache, s_id, index, 2)
-                r_tmp = score_indexed_features(r_feats, weights)
-                prob_r.increment_all(r_feats, -np.exp(argmax[2]))
-                pred_r.increment_all(r_feats, np.exp(r_tmp))
-
-                pred_s.add(pred_l)
-                pred_s.add(pred_r)
-
-                prob_s.add(prob_l)
-                prob_s.add(prob_r)
-
-                # print pred_s
-                for key in pred_s.keys():
-                    value = pred_s.get_count(key)
-                    pred_s.set_count(key, -np.log(value))
-
-                # print "pred s", pred_s
-                gold_features.add(pred_s)
-
-                # print "prob s", prob_s
-                gradient.increment_all(gold_feats, 1)
-                gradient.add(prob_s)
-
-                # print "gold feature", gold_features
-                # print "gradient", gradient
-
-                # raw_input('bla')
-
+                # ======================================================
+                # update weight
+                # ======================================================
                 for i in gradient.keys():
-                    weights[i] += 0.1 * gradient.get_count(i)
-                
-                index += 1
+                    weights[i] += 0.1/(epoch+1) * gradient.get_count(i) # --> best result
+
                 state = next_state
-
-        # # end while            
-        # parsed_dev.append(ParsedSentence(sentence.tokens, states[-1].get_dep_objs(len(sentence))))
-
-    # print_evaluation(parsed_sentences, parsed_dev)
+                index += 1
 
     return GreedyModel(feature_indexer, weights)
 
+# ======================================================
 # Returns a BeamedModel trained over the given treebank.
+# ======================================================
 def train_beamed_model(parsed_sentences):
     raise Exception("IMPLEMENT ME")
 
