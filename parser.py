@@ -20,8 +20,8 @@ if __name__ == '__main__':
     # print str(dev[5])
 
     # reduce training and dev data
-    train = train[:100] #[:1000]
-    dev = dev[:100] #train
+    train = train[:1000] #[:1000]
+    # dev = dev[:100] #train
 
     # print train[0]
     # print dev[0]
@@ -55,7 +55,11 @@ if __name__ == '__main__':
             test_decoded = [trained_model.parse(test_ex) for test_ex in test]
             print_output(test_decoded, "test.conllx.out")
     elif system_to_run == "BEAM":
+        start = time.time()
         trained_model = train_beamed_model(train)
+        end = time.time()
+        print "Training time:", (end - start)
+        
         print "Parsing dev"
         parsed_dev = [trained_model.parse(sent) for sent in dev]
         if run_on_test:

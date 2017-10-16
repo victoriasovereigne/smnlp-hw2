@@ -94,7 +94,8 @@ class BeamedModel(object):
                     d_id = label_indexer.index_of(y_decision)
 
                     if potential_new_state.is_legal():
-                        new_feats = extract_features(fi, sentence, potential_new_state, y_decision, False)
+                        # new_feats = extract_features(fi, sentence, potential_new_state, y_decision, False)
+                        new_feats = extract_features(fi, sentence, old_state, y_decision, False)
                         new_score = score_indexed_features(new_feats, weights)
                         new_score += old_score
                         beams[i].add(potential_new_state, new_score)
@@ -107,7 +108,7 @@ class BeamedModel(object):
 
 
 
-        raise Exception("IMPLEMENT ME")
+        # raise Exception("IMPLEMENT ME")
 
 
 # Stores state of a shift-reduce parser, namely the stack, buffer, and the set of dependencies that have
@@ -355,7 +356,7 @@ def train_greedy_model(parsed_sentences):
     # ======================================================
     # build a classifier (logistic regression)
     # ======================================================
-    num_epochs = 1
+    num_epochs = 5
 
     for epoch in xrange(num_epochs):
         for s_id, sentence in enumerate(parsed_sentences):
@@ -384,9 +385,7 @@ def train_greedy_model(parsed_sentences):
 
                     if next_state.is_legal():
                         feats = get_features_state(feature_cache, state_indexer, s_id, state, d_id)
-                        # numerator = score_indexed_features(feats, weights)
-                        numerator = ada.score(feats)
-                        # raw_input("bla")
+                        numerator = score_indexed_features(feats, weights)
                         log_probs[d_id] = numerator 
 
                 # ======================================================
@@ -397,6 +396,10 @@ def train_greedy_model(parsed_sentences):
                 decision = label_indexer.get_object(get_argmax(log_probs))
                 gold_decision = sentence_gold_decisions[index]
                 next_state = state.take_action(gold_decision)
+                print possible_actions
+                print log_probs
+                print [np.exp(a) for a in log_probs]
+                raw_input("pause")
 
                 # ======================================================
                 # compute gradient
@@ -417,17 +420,17 @@ def train_greedy_model(parsed_sentences):
                 # ======================================================
                 # update weight
                 # ======================================================
-                # for i in gradient.keys():
-                #     weights[i] += 0.1/(epoch+1) * gradient.get_count(i) # --> best result
+                for i in gradient.keys():
+                    weights[i] += 0.1/(epoch+1) * gradient.get_count(i) # --> best result
 
                 # try adagrad
                 # if s_id % 10 == 0:
-                ada.apply_gradient_update(gradient, 1)
+                # ada.apply_gradient_update(gradient, 1)
 
                 state = next_state
                 index += 1
 
-    weights = ada.get_final_weights()
+    # weights = ada.get_final_weights()
     
     return GreedyModel(feature_indexer, weights)
 
@@ -477,154 +480,99 @@ def train_beamed_model(parsed_sentences):
     for sentence in parsed_sentences:
         decisions, states = get_decision_sequence(sentence)
         gold_decisions.append(decisions)
-        gold_states.append(states)
+        gold_states.append(states)   
 
-    # ======================================================
-    # extract features
-    # ======================================================
-    feature_cache = [[[[] for k in xrange(3)] for j in xrange(len(gold_states[i]))] for i in xrange(len(parsed_sentences))]
-    state_indexers = []
-
-    # for s_id, sentence in enumerate(parsed_sentences):
-    #     if s_id % 100 == 0:
-    #         print "Extracting features:", s_id, "/", len(parsed_sentences)
-
-    #     state = initial_parser_state(len(sentence))
-    #     curr_gold_decisions = gold_decisions[s_id]
-    #     curr_gold_states = gold_states[s_id]
-    #     state_indexer = Indexer()
-    #     i = 0
-
-    #     while not state.is_finished():
-    #         gold_decision = curr_gold_decisions[i]
-    #         d_id = label_indexer.index_of(gold_decision)
-    #         possible_actions = get_possible_actions(state)
-
-    #         for decision in possible_actions:
-    #             d_id = label_indexer.index_of(decision)
-    #             key = (s_id, str(state), d_id)
-    #             tmp_state = state.take_action(decision)
-
-    #             if tmp_state.is_legal():
-    #                 state_id = state_indexer.get_index(str(state))
-    #                 feats = extract_features(feature_indexer, sentence, state, decision, True)
-    #                 feature_cache[s_id][state_id][d_id] = feats
-            
-    #         next_state = state.take_action(gold_decision)
-    #         state = next_state
-    #         i += 1
-
-    #     state_indexers.append(state_indexer)
-
-    
-
-    weights = np.random.rand(100000,) #np.zeros(shape=(100000,)) 
+    weights = np.zeros(shape=(1000000,)) # np.random.rand(100000,) 
+    ada = AdagradTrainer(weights)
 
     # ======================================================
     # START TRAINING BEAM MODEL
     # ======================================================
-    num_epochs = 1
+    num_epochs = 5
     parsed_dev = []
 
     for epoch in xrange(num_epochs):
         for s_id, sentence in enumerate(parsed_sentences):
+            early_update = False
+
             if s_id % 100 == 0:
                 print "Training:", s_id, "/", len(parsed_sentences)
 
-            state = initial_parser_state(len(sentence))            
-            # state_indexer = state_indexers[s_id]
+            state = initial_parser_state(len(sentence))
             initial_features = extract_features(feature_indexer, sentence, state, 'S', True) #get_features_state(feature_cache, state_indexer, 0, state, 0)
             initial_counter = Counter()
-            initial_counter.increment_all(initial_features, 1)
+            initial_counter.increment_all(initial_features, -1)
 
             beams = [Beam(beam_size)] * (2*len(sentence)+1)
-            beams[0].add((initial_counter, state), 0)
+            beams[0].add((initial_counter, state), score_indexed_features(initial_features, weights))
 
-            # pred_features = Counter()
             gold_features = Counter()
 
-            # gold features
-            for index, gold_state in enumerate(gold_states[s_id]):
-                if index < len(gold_decisions[s_id]):
-                    decision = gold_decisions[s_id][index]
-                    d_id = label_indexer.index_of(decision)
-                    gf = extract_features(feature_indexer, sentence, gold_state, decision, True)
-                    #get_features_state(feature_cache, state_indexer, s_id, gold_state, d_id)
-                    gold_features.increment_all(gf, 1)
-            
-            for i in xrange(1, 2*len(sentence)+1):
-                # beams[i] = compute_successors(beams[i-1], feature_indexer, sentence, weights)
-                beams[i] = Beam(beam_size)
+            for i in xrange(2*len(sentence) + 1):
+                if i < len(gold_decisions[s_id]):
+                    gold_state = gold_states[s_id][i]
+                    gold_decision = gold_decisions[s_id][i]
+                    gold_feats = extract_features(feature_indexer, sentence, gold_state, gold_decision, True)
+                    gold_features.increment_all(gold_feats, 1)
+
+                if i > 0:
+                    beams[i] = Beam(beam_size)
+                    zipped = beams[i-1].get_elts_and_scores()
+
+                    for (old_counter, old_state), old_score in zipped:
+                        possible_actions = get_possible_actions(old_state)
+
+                        for y_decision in possible_actions:
+                            potential_new_state = old_state.take_action(y_decision)
+
+                            if potential_new_state.is_legal():
+                                new_feats = extract_features(feature_indexer, sentence, old_state, y_decision, False)
+                                new_score = score_indexed_features(new_feats, weights)
+                                new_score += old_score
+
+                                new_counter = Counter()
+                                new_counter.increment_all(new_feats, -1)
+                                new_counter.add(old_counter)
+                                beams[i].add((new_counter, potential_new_state), new_score)
+
+                    
+                curr_state_until_now = beams[i].head()[1]
+                curr_score = beams[i].scores[0]
                 
-                # compute successors
-                zipped = beams[i-1].get_elts_and_scores()
+                gold_state_until_now = gold_states[s_id][i]
+                pred_features = beams[i].head()[0]
 
-                for zipp in zipped:       
-                    (feat_counter, old_state), old_score = zipp
-                    possible_actions = get_possible_actions(old_state)
+                gradient = Counter()
+                gradient.add(gold_features)
+                gradient.add(pred_features)
 
-                    for y_decision in possible_actions:
-                        potential_new_state = old_state.take_action(y_decision)
-                        d_id = label_indexer.index_of(y_decision)
+                states_in_beam = [b[1] for b in beams[i].get_elts()]                
 
-                        # print '-----------------------'
-                        # print y_decision
-                        if potential_new_state.is_legal() and potential_new_state not in beams[i].get_elts():
-                            # new_feats = get_features_state(feature_cache, state_indexer, s_id, potential_new_state, d_id)
-                            new_feats = extract_features(feature_indexer, sentence, potential_new_state, y_decision, True)
-                            new_score = score_indexed_features(new_feats, weights)
-                            new_score += old_score
-                            new_counter = Counter()
-                            new_counter.increment_all(new_feats, -1)
-                            new_counter.add(feat_counter)
-                            # print new_feats
-                            beams[i].add((new_counter, potential_new_state), new_score)
-                            # pred_features.increment_all(new_feats, -1)
-                
-                # print '======================================='
-                # for el,score in beams[i].get_elts_and_scores():
-                #     print el[0]
-                #     print el[1]
-                #     print score
+                # early updating
+                if gold_state_until_now not in states_in_beam:
+                    for i in gradient.keys():
+                        weights[i] += 0.1/(epoch+1) * gradient.get_count(i)
+                    early_update = True
+                    break
+            if early_update == False:
+                final_pred_features, final_pred_state = beams[-1].head()
+                final_gold_state = gold_states[s_id][-1]
 
-                # raw_input("bla")
-                # wrapper class --> parser state + count 
-                
-                # have a separate pred_features for each decision?
+                # ======================================================
+                # compute gradient
+                # ======================================================
+                if final_gold_state != final_pred_state:
+                    total_gradient = Counter()
+                    total_gradient.add(gold_features)
+                    total_gradient.add(final_pred_features)
 
-                # print "old", old_beam
-                # print "new", len(new_beam)
-
-                # for (el, score) in new_beam.get_elts_and_scores():
-                #     print el, score
+                    for i in gold_features.keys():
+                        weights[i] += 0.1/(epoch+1) * total_gradient.get_count(i)
 
 
-            # gold features --> [1:1, 2:5, 3:1]
-
-            # print pred_features
-            # print gold_features
-
-            # raw_input("bla")
-
-            # print "================================"
-            final_pred_features, final_pred_state = beams[-1].head()
-            final_gold_state = gold_states[s_id][-1]
-            # print final_pred_state # predicted tree
-            # print final_gold_state # gold tree
-
-            # ======================================================
-            # compute gradient
-            # ======================================================
-            gold_features.add(final_pred_features)
-
-            for i in gold_features.keys():
-                weights[i] += 0.01 * gold_features.get_count(i)
-
-
-            # parsed_dev.append(ParsedSentence(sentence.tokens, beams[-1].head().get_dep_objs(len(sentence))))
+        #     parsed_dev.append(ParsedSentence(sentence.tokens, final_pred_state.get_dep_objs(len(sentence))))
 
         # print_evaluation(parsed_sentences, parsed_dev)
-
 
     return BeamedModel(feature_indexer, weights, beam_size)
 
