@@ -20,8 +20,8 @@ if __name__ == '__main__':
     # print str(dev[5])
 
     # reduce training and dev data
-    # train = train #[:1000]
-    # dev = dev #train
+    train = train[:100] #[:1000]
+    dev = dev[:100] #train
 
     # print train[0]
     # print dev[0]
