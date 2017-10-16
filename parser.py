@@ -20,7 +20,7 @@ if __name__ == '__main__':
     # print str(dev[5])
 
     # reduce training and dev data
-    train = train[:1000] #[:1000]
+    train = train[:100] #[:1000]
     # dev = dev[:100] #train
 
     # print train[0]
@@ -59,7 +59,7 @@ if __name__ == '__main__':
         trained_model = train_beamed_model(train)
         end = time.time()
         print "Training time:", (end - start)
-        
+
         print "Parsing dev"
         parsed_dev = [trained_model.parse(sent) for sent in dev]
         if run_on_test:

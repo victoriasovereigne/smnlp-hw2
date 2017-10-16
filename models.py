@@ -94,12 +94,10 @@ class BeamedModel(object):
                     d_id = label_indexer.index_of(y_decision)
 
                     if potential_new_state.is_legal():
-                        # new_feats = extract_features(fi, sentence, potential_new_state, y_decision, False)
                         new_feats = extract_features(fi, sentence, old_state, y_decision, False)
                         new_score = score_indexed_features(new_feats, weights)
                         new_score += old_score
                         beams[i].add(potential_new_state, new_score)
-                        # pred_features.increment_all(new_feats, -1)
 
         dependencies = beams[-1].head().get_dep_objs(len(sentence))
 
@@ -237,12 +235,12 @@ def get_label_indexer():
     return label_indexer
 
 
-def get_features(feature_cache, s_id, state_id, d_id):
-    key = (s_id, state_id, d_id)
-    if key in feature_cache.keys():
-        return feature_cache[key]
-    else:
-        return []
+# def get_features(feature_cache, s_id, state_id, d_id):
+#     key = (s_id, state_id, d_id)
+#     if key in feature_cache.keys():
+#         return feature_cache[key]
+#     else:
+#         return []
 
 def get_features_state(feature_cache, state_indexer, s_id, state, d_id):
     state_id = state_indexer.index_of(str(state))
@@ -435,33 +433,31 @@ def train_greedy_model(parsed_sentences):
     return GreedyModel(feature_indexer, weights)
 
 
-# def compute_successors(old_beam, feature_indexer, sentence, weights):
-#     new_beam = Beam(old_beam.size)
-#     zipped = old_beam.get_elts_and_scores()    
+def compute_successors(old_beam, feature_indexer, sentence, weights):
+# def compute_successors(old_beam, feature_cache, state_indexer, s_id, weights):
+    new_beam = Beam(old_beam.size)
+    zipped = old_beam.get_elts_and_scores()
+    label_indexer = get_label_indexer()
 
-#     for zipp in zipped:        
-#         old_state, old_score = zipp
-#         possible_actions = get_possible_actions(old_state)
+    for (old_counter, old_state), old_score in zipped:
+        possible_actions = get_possible_actions(old_state)
 
-#         for y_decision in possible_actions:
-#             # print "decision", y_decision
-#             potential_new_state = old_state.take_action(y_decision)
+        for y_decision in possible_actions:
+            potential_new_state = old_state.take_action(y_decision)
+            # d_id = label_indexer.index_of(y_decision)
 
-#             if potential_new_state.is_legal() and potential_new_state not in new_beam.get_elts():
-#                 # print "legal"
-#                 new_feats = extract_features(feature_indexer, sentence, potential_new_state, y_decision, False)
-#                 new_score = score_indexed_features(new_feats, weights)
-#                 new_score += old_score
-#                 new_beam.add(potential_new_state, new_score)
-#                 # print "add new state"
-    
-#     print "old", old_beam
-#     # print "new", len(new_beam)
+            if potential_new_state.is_legal():
+                new_feats = extract_features(feature_indexer, sentence, old_state, y_decision, False)
+                # new_feats = get_features_state(feature_cache, state_indexer, s_id, old_state, d_id)
+                new_score = score_indexed_features(new_feats, weights)
+                new_score += old_score
 
-#     for (el, score) in new_beam.get_elts_and_scores():
-#         print el, score
+                new_counter = Counter()
+                new_counter.increment_all(new_feats, -1)
+                new_counter.add(old_counter)
+                new_beam.add((new_counter, potential_new_state), new_score)
 
-#     return new_beam
+    return new_beam
 
 
 # ======================================================
@@ -480,15 +476,52 @@ def train_beamed_model(parsed_sentences):
     for sentence in parsed_sentences:
         decisions, states = get_decision_sequence(sentence)
         gold_decisions.append(decisions)
-        gold_states.append(states)   
+        gold_states.append(states)
 
-    weights = np.zeros(shape=(1000000,)) # np.random.rand(100000,) 
+    # ======================================================
+    # get feature cache
+    # ======================================================
+    feature_cache = [[[[] for k in xrange(3)] for j in xrange(len(gold_states[i]))] for i in xrange(len(parsed_sentences))]
+    state_indexers = []
+
+    for s_id, sentence in enumerate(parsed_sentences):
+        if s_id % 100 == 0:
+            print "Extracting features:", s_id, "/", len(parsed_sentences)
+
+        state = initial_parser_state(len(sentence))
+        curr_gold_decisions = gold_decisions[s_id]
+        curr_gold_states = gold_states[s_id]
+        state_indexer = Indexer()
+        i = 0
+
+        while not state.is_finished():
+            gold_decision = curr_gold_decisions[i]
+            d_id = label_indexer.index_of(gold_decision)
+            possible_actions = get_possible_actions(state)
+
+            for decision in possible_actions:
+                d_id = label_indexer.index_of(decision)
+                # key = (s_id, str(state), d_id)
+                tmp_state = state.take_action(decision)
+
+                if tmp_state.is_legal():
+                    state_id = state_indexer.get_index(str(state))
+                    feats = extract_features(feature_indexer, sentence, state, decision, True)
+                    feature_cache[s_id][state_id][d_id] = feats
+            
+            next_state = state.take_action(gold_decision)
+            state = next_state
+            i += 1
+
+        state_indexers.append(state_indexer)
+
+    weights = np.zeros(shape=(len(feature_indexer),)) # np.random.rand(100000,) 
     ada = AdagradTrainer(weights)
 
     # ======================================================
     # START TRAINING BEAM MODEL
     # ======================================================
-    num_epochs = 5
+    num_epochs = 1
     parsed_dev = []
 
     for epoch in xrange(num_epochs):
@@ -498,8 +531,9 @@ def train_beamed_model(parsed_sentences):
             if s_id % 100 == 0:
                 print "Training:", s_id, "/", len(parsed_sentences)
 
+            state_indexer = state_indexers[s_id]
             state = initial_parser_state(len(sentence))
-            initial_features = extract_features(feature_indexer, sentence, state, 'S', True) #get_features_state(feature_cache, state_indexer, 0, state, 0)
+            initial_features = get_features_state(feature_cache, state_indexer, s_id, state, 0) #extract_features(feature_indexer, sentence, state, 'S', True) #get_features_state(feature_cache, state_indexer, 0, state, 0)
             initial_counter = Counter()
             initial_counter.increment_all(initial_features, -1)
 
@@ -511,30 +545,13 @@ def train_beamed_model(parsed_sentences):
             for i in xrange(2*len(sentence) + 1):
                 if i < len(gold_decisions[s_id]):
                     gold_state = gold_states[s_id][i]
-                    gold_decision = gold_decisions[s_id][i]
-                    gold_feats = extract_features(feature_indexer, sentence, gold_state, gold_decision, True)
+                    gold_id = label_indexer.index_of(gold_decisions[s_id][i])
+                    gold_feats = get_features_state(feature_cache, state_indexer, s_id, gold_state, gold_id) #extract_features(feature_indexer, sentence, gold_state, gold_decision, True)
                     gold_features.increment_all(gold_feats, 1)
 
                 if i > 0:
-                    beams[i] = Beam(beam_size)
-                    zipped = beams[i-1].get_elts_and_scores()
-
-                    for (old_counter, old_state), old_score in zipped:
-                        possible_actions = get_possible_actions(old_state)
-
-                        for y_decision in possible_actions:
-                            potential_new_state = old_state.take_action(y_decision)
-
-                            if potential_new_state.is_legal():
-                                new_feats = extract_features(feature_indexer, sentence, old_state, y_decision, False)
-                                new_score = score_indexed_features(new_feats, weights)
-                                new_score += old_score
-
-                                new_counter = Counter()
-                                new_counter.increment_all(new_feats, -1)
-                                new_counter.add(old_counter)
-                                beams[i].add((new_counter, potential_new_state), new_score)
-
+                    beams[i] = compute_successors(beams[i-1], feature_indexer, sentence, weights)
+                    # beams[i] = compute_successors(beams[i-1], feature_cache, state_indexer, s_id, weights)
                     
                 curr_state_until_now = beams[i].head()[1]
                 curr_score = beams[i].scores[0]
@@ -548,12 +565,18 @@ def train_beamed_model(parsed_sentences):
 
                 states_in_beam = [b[1] for b in beams[i].get_elts()]                
 
+                # ======================================================
                 # early updating
+                # ======================================================
                 if gold_state_until_now not in states_in_beam:
                     for i in gradient.keys():
                         weights[i] += 0.1/(epoch+1) * gradient.get_count(i)
                     early_update = True
                     break
+
+            # ======================================================
+            # global updating
+            # ======================================================
             if early_update == False:
                 final_pred_features, final_pred_state = beams[-1].head()
                 final_gold_state = gold_states[s_id][-1]
@@ -568,11 +591,6 @@ def train_beamed_model(parsed_sentences):
 
                     for i in gold_features.keys():
                         weights[i] += 0.1/(epoch+1) * total_gradient.get_count(i)
-
-
-        #     parsed_dev.append(ParsedSentence(sentence.tokens, final_pred_state.get_dep_objs(len(sentence))))
-
-        # print_evaluation(parsed_sentences, parsed_dev)
 
     return BeamedModel(feature_indexer, weights, beam_size)
 
