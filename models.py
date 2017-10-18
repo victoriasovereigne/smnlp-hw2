@@ -11,9 +11,10 @@ ROOT = -1
 
 # Greedy parsing model. This model treats shift/reduce decisions as a multiclass classification problem.
 class GreedyModel(object):
-    def __init__(self, feature_indexer, feature_weights):
+    def __init__(self, feature_indexer, feature_weights, extension):
         self.feature_indexer = feature_indexer
         self.feature_weights = feature_weights
+        self.extension = extension
         # TODO: Modify or add arguments as necessary
 
     # Given a ParsedSentence, returns a new ParsedSentence with predicted dependency information.
@@ -37,7 +38,7 @@ class GreedyModel(object):
                 d_id = label_indexer.index_of(y_decision)
 
                 if next_state.is_legal():
-                    feats = extract_features(fi, sentence, state, y_decision, False)
+                    feats = extract_features(fi, sentence, state, y_decision, False, extension=self.extension)
                     numerator = score_indexed_features(feats, weights)
                     log_probs[d_id] = numerator
 
@@ -59,10 +60,11 @@ class GreedyModel(object):
 # Beam-search-based global parsing model. Shift/reduce decisions are still modeled with local features, but scores are
 # accumulated over the whole sequence of decisions to give a "global" decision.
 class BeamedModel(object):
-    def __init__(self, feature_indexer, feature_weights, beam_size=1):
+    def __init__(self, feature_indexer, feature_weights, beam_size=1, extension=False):
         self.feature_indexer = feature_indexer
         self.feature_weights = feature_weights
         self.beam_size = beam_size
+        self.extension = extension
         # TODO: Modify or add arguments as necessary
 
     # Given a ParsedSentence, returns a new ParsedSentence with predicted dependency information.
@@ -74,9 +76,6 @@ class BeamedModel(object):
         state = initial_parser_state(len(sentence))
         beam_size = self.beam_size
         label_indexer = get_label_indexer()
-
-        # pred_features = Counter()
-        # gold_features = Counter()
         
         beams = [Beam(beam_size)] * (2*len(sentence) + 1)
         beams[0].add(state, 0)
@@ -94,7 +93,7 @@ class BeamedModel(object):
                     d_id = label_indexer.index_of(y_decision)
 
                     if potential_new_state.is_legal():
-                        new_feats = extract_features(fi, sentence, old_state, y_decision, False)
+                        new_feats = extract_features(fi, sentence, old_state, y_decision, False, extension=self.extension)
                         new_score = score_indexed_features(new_feats, weights)
                         new_score += old_score
                         beams[i].add(potential_new_state, new_score)
@@ -102,11 +101,6 @@ class BeamedModel(object):
         dependencies = beams[-1].head().get_dep_objs(len(sentence))
 
         return ParsedSentence(sentence.tokens, dependencies)
-
-
-
-
-        # raise Exception("IMPLEMENT ME")
 
 
 # Stores state of a shift-reduce parser, namely the stack, buffer, and the set of dependencies that have
@@ -234,14 +228,6 @@ def get_label_indexer():
     label_indexer.get_index("R")
     return label_indexer
 
-
-# def get_features(feature_cache, s_id, state_id, d_id):
-#     key = (s_id, state_id, d_id)
-#     if key in feature_cache.keys():
-#         return feature_cache[key]
-#     else:
-#         return []
-
 def get_features_state(feature_cache, state_indexer, s_id, state, d_id):
     state_id = state_indexer.index_of(str(state))
     if state_id != -1:
@@ -297,7 +283,7 @@ def logaddexp(array):
 # ======================================================
 # Returns a GreedyModel trained over the given treebank.
 # ======================================================
-def train_greedy_model(parsed_sentences):
+def train_greedy_model(parsed_sentences, extension=False, mode='SGD'):
     feature_indexer = Indexer()
     label_indexer = get_label_indexer()
     gold_decisions = []
@@ -339,7 +325,7 @@ def train_greedy_model(parsed_sentences):
 
                 if tmp_state.is_legal():
                     state_id = state_indexer.get_index(str(state))
-                    feats = extract_features(feature_indexer, sentence, state, decision, True)
+                    feats = extract_features(feature_indexer, sentence, state, decision, True, extension=extension)
                     feature_cache[s_id][state_id][d_id] = feats
             
             next_state = state.take_action(gold_decision)
@@ -349,7 +335,7 @@ def train_greedy_model(parsed_sentences):
         state_indexers.append(state_indexer)
 
     weights = np.zeros(shape=(len(feature_indexer),)) #np.random.rand(len(feature_indexer),)
-    ada = AdagradTrainer(weights)
+    ada = AdagradTrainer(weights, lamb=1e-7)
 
     # ======================================================
     # build a classifier (logistic regression)
@@ -383,7 +369,7 @@ def train_greedy_model(parsed_sentences):
 
                     if next_state.is_legal():
                         feats = get_features_state(feature_cache, state_indexer, s_id, state, d_id)
-                        numerator = score_indexed_features(feats, weights)
+                        numerator = ada.score(feats) #score_indexed_features(feats, weights)
                         log_probs[d_id] = numerator 
 
                 # ======================================================
@@ -394,10 +380,6 @@ def train_greedy_model(parsed_sentences):
                 decision = label_indexer.get_object(get_argmax(log_probs))
                 gold_decision = sentence_gold_decisions[index]
                 next_state = state.take_action(gold_decision)
-                print possible_actions
-                print log_probs
-                print [np.exp(a) for a in log_probs]
-                raw_input("pause")
 
                 # ======================================================
                 # compute gradient
@@ -411,29 +393,30 @@ def train_greedy_model(parsed_sentences):
                 for d_id2 in xrange(len(label_indexer)):
                     fxy = get_features_state(feature_cache, state_indexer, s_id, state, d_id2)
                     expected.increment_all(fxy, -np.exp(log_probs[d_id2]))
-                    # expected.increment_all(fxy, -1) # perceptron?
 
                 gradient.add(expected)
 
                 # ======================================================
                 # update weight
                 # ======================================================
-                for i in gradient.keys():
-                    weights[i] += 0.1/(epoch+1) * gradient.get_count(i) # --> best result
+                if mode == 'SGD':
+                    for i in gradient.keys():
+                        weights[i] += 0.1/(epoch+1) * gradient.get_count(i) # --> best result
 
                 # try adagrad
-                # if s_id % 10 == 0:
-                # ada.apply_gradient_update(gradient, 1)
+                if mode == 'ADA':
+                    ada.apply_gradient_update(gradient, 1)
 
                 state = next_state
                 index += 1
 
-    # weights = ada.get_final_weights()
+    if mode == 'ADA':
+        weights = ada.get_final_weights()
     
-    return GreedyModel(feature_indexer, weights)
+    return GreedyModel(feature_indexer, weights, extension)
 
 
-def compute_successors(old_beam, feature_indexer, sentence, weights):
+def compute_successors(old_beam, feature_indexer, sentence, weights, extension):
 # def compute_successors(old_beam, feature_cache, state_indexer, s_id, weights):
     new_beam = Beam(old_beam.size)
     zipped = old_beam.get_elts_and_scores()
@@ -447,7 +430,7 @@ def compute_successors(old_beam, feature_indexer, sentence, weights):
             # d_id = label_indexer.index_of(y_decision)
 
             if potential_new_state.is_legal():
-                new_feats = extract_features(feature_indexer, sentence, old_state, y_decision, False)
+                new_feats = extract_features(feature_indexer, sentence, old_state, y_decision, False, extension=extension)
                 # new_feats = get_features_state(feature_cache, state_indexer, s_id, old_state, d_id)
                 new_score = score_indexed_features(new_feats, weights)
                 new_score += old_score
@@ -463,12 +446,12 @@ def compute_successors(old_beam, feature_indexer, sentence, weights):
 # ======================================================
 # Returns a BeamedModel trained over the given treebank.
 # ======================================================
-def train_beamed_model(parsed_sentences):
+def train_beamed_model(parsed_sentences, extension, mode='SGD'):
     feature_indexer = Indexer()
     label_indexer = get_label_indexer()
     gold_decisions = []
     gold_states = []
-    beam_size = 4
+    beam_size = 10
 
     # ======================================================
     # get the gold decisions and gold states
@@ -501,12 +484,11 @@ def train_beamed_model(parsed_sentences):
 
             for decision in possible_actions:
                 d_id = label_indexer.index_of(decision)
-                # key = (s_id, str(state), d_id)
                 tmp_state = state.take_action(decision)
 
                 if tmp_state.is_legal():
                     state_id = state_indexer.get_index(str(state))
-                    feats = extract_features(feature_indexer, sentence, state, decision, True)
+                    feats = extract_features(feature_indexer, sentence, state, decision, True, extension=extension)
                     feature_cache[s_id][state_id][d_id] = feats
             
             next_state = state.take_action(gold_decision)
@@ -516,13 +498,13 @@ def train_beamed_model(parsed_sentences):
         state_indexers.append(state_indexer)
 
     weights = np.zeros(shape=(len(feature_indexer),)) # np.random.rand(100000,) 
-    ada = AdagradTrainer(weights)
+    ada = AdagradTrainer(weights, lamb=1e-7)
 
     # ======================================================
     # START TRAINING BEAM MODEL
     # ======================================================
-    num_epochs = 1
-    parsed_dev = []
+    num_epochs = 5
+    parsed_dev = []  
 
     for epoch in xrange(num_epochs):
         for s_id, sentence in enumerate(parsed_sentences):
@@ -550,7 +532,7 @@ def train_beamed_model(parsed_sentences):
                     gold_features.increment_all(gold_feats, 1)
 
                 if i > 0:
-                    beams[i] = compute_successors(beams[i-1], feature_indexer, sentence, weights)
+                    beams[i] = compute_successors(beams[i-1], feature_indexer, sentence, weights, extension)
                     # beams[i] = compute_successors(beams[i-1], feature_cache, state_indexer, s_id, weights)
                     
                 curr_state_until_now = beams[i].head()[1]
@@ -569,8 +551,12 @@ def train_beamed_model(parsed_sentences):
                 # early updating
                 # ======================================================
                 if gold_state_until_now not in states_in_beam:
-                    for i in gradient.keys():
-                        weights[i] += 0.1/(epoch+1) * gradient.get_count(i)
+                    if mode == 'SGD':
+                        for i in gradient.keys():
+                            weights[i] += 0.1/(epoch+1) * gradient.get_count(i)
+                    elif mode == 'ADA':
+                        ada.apply_gradient_update(gradient, 1)
+
                     early_update = True
                     break
 
@@ -589,20 +575,29 @@ def train_beamed_model(parsed_sentences):
                     total_gradient.add(gold_features)
                     total_gradient.add(final_pred_features)
 
-                    for i in gold_features.keys():
-                        weights[i] += 0.1/(epoch+1) * total_gradient.get_count(i)
+                    if mode == 'SGD':
+                        for i in gold_features.keys():
+                            weights[i] += 0.1/(epoch+1) * total_gradient.get_count(i)
+                    elif mode == 'ADA':
+                        ada.apply_gradient_update(total_gradient, 1)
 
+    print "BEAM SIZE:", beam_size
+    print "NUM OF EPOCHS:", num_epochs
+
+    if mode == 'ADA':
+        weights = ada.get_final_weights()
+    
     return BeamedModel(feature_indexer, weights, beam_size)
 
 
 # Extract features for the given decision in the given parser state. Features look at the top of the
 # stack and the start of the buffer. Note that this isn't in any way a complete feature set -- play around with
 # more of your own!
-def extract_features(feat_indexer, sentence, parser_state, decision, add_to_indexer):
+def extract_features(feat_indexer, sentence, parser_state, decision, add_to_indexer, extension=False):
     feats = []
-    sos_tok = Token("<s>", "<S>", "<S>")
-    root_tok = Token("<root>", "<ROOT>", "<ROOT>")
-    eos_tok = Token("</s>", "</S>", "</S>")
+    sos_tok = Token("<s>", "<S>", "<S>", "<S>")
+    root_tok = Token("<root>", "<ROOT>", "<ROOT>", "<ROOT>")
+    eos_tok = Token("</s>", "</S>", "</S>", "</S>")
     if parser_state.stack_len() >= 1:
         head_idx = parser_state.stack_head()
         stack_head_tok = sentence.tokens[head_idx] if head_idx != -1 else root_tok
@@ -616,6 +611,18 @@ def extract_features(feat_indexer, sentence, parser_state, decision, add_to_inde
         stack_two_back_tok = sos_tok
     buffer_first_tok = sentence.tokens[parser_state.get_buffer_word_idx(0)] if parser_state.buffer_len() >= 1 else eos_tok
     buffer_second_tok = sentence.tokens[parser_state.get_buffer_word_idx(1)] if parser_state.buffer_len() >= 2 else eos_tok
+
+    # add third word
+    if extension == True:
+        if parser_state.stack_len() >= 3:
+            three_back_idx = parser_state.stack[-3]
+            stack_three_back_tok = sentence.tokens[three_back_idx] if three_back_idx != -1 else root_tok
+        else:
+            stack_three_back_tok = sos_tok
+
+    buffer_third_tok = sentence.tokens[parser_state.get_buffer_word_idx(2)] if parser_state.buffer_len() >= 3 else eos_tok
+
+
     # Shortcut for adding features
     def add_feat(feat):
         maybe_add_feature(feats, feat_indexer, add_to_indexer, feat)
@@ -625,12 +632,24 @@ def extract_features(feat_indexer, sentence, parser_state, decision, add_to_inde
     add_feat(decision + ":S1Word=" + stack_two_back_tok.word)
     add_feat(decision + ":S1Pos=" + stack_two_back_tok.pos)
     add_feat(decision + ":S1CPos=" + stack_two_back_tok.cpos)
+
+    # if extension == True: #BAD
+    #     add_feat(decision + ":S2Word=" + stack_three_back_tok.word)
+    #     add_feat(decision + ":S2Pos=" + stack_three_back_tok.pos)
+    #     add_feat(decision + ":S2CPos=" + stack_three_back_tok.cpos)
+
     add_feat(decision + ":B0Word=" + buffer_first_tok.word)
     add_feat(decision + ":B0Pos=" + buffer_first_tok.pos)
     add_feat(decision + ":B0CPos=" + buffer_first_tok.cpos)
     add_feat(decision + ":B1Word=" + buffer_second_tok.word)
     add_feat(decision + ":B1Pos=" + buffer_second_tok.pos)
     add_feat(decision + ":B1CPos=" + buffer_second_tok.cpos)
+
+    # if extension == True: #BAD
+    #     add_feat(decision + ":B2Word=" + buffer_third_tok.word)
+    #     add_feat(decision + ":B2Pos=" + buffer_third_tok.pos)
+    #     add_feat(decision + ":B2CPos=" + buffer_third_tok.cpos)
+
     add_feat(decision + ":S1S0Pos=" + stack_two_back_tok.pos + "&" + stack_head_tok.pos)
     add_feat(decision + ":S0B0Pos=" + stack_head_tok.pos + "&" + buffer_first_tok.pos)
     add_feat(decision + ":S1B0Pos=" + stack_two_back_tok.pos + "&" + buffer_first_tok.pos)
@@ -642,6 +661,52 @@ def extract_features(feat_indexer, sentence, parser_state, decision, add_to_inde
     add_feat(decision + ":S1S0PosWord=" + stack_two_back_tok.pos + "&" + stack_head_tok.word)
     add_feat(decision + ":S1S0B0Pos=" + stack_two_back_tok.pos + "&" + stack_head_tok.pos + "&" + buffer_first_tok.pos)
     add_feat(decision + ":S0B0B1Pos=" + stack_head_tok.pos + "&" + buffer_first_tok.pos + "&" + buffer_second_tok.pos)
+
+    if extension == True:
+        # ------------- v1 extension ---------------
+        add_feat(decision + ":S0WordPos=" + stack_head_tok.word + "&" + stack_head_tok.pos) #GOOD
+        add_feat(decision + ":B0WordPos=" + buffer_first_tok.word + "&" + buffer_first_tok.pos) #GOOD
+        add_feat(decision + ":S0Dep=" + stack_head_tok.dep) #GOOD
+        add_feat(decision + ":S0PosDep=" + stack_head_tok.pos + "&" + stack_head_tok.dep) #GOOD
+        add_feat(decision + ":B0Dep=" + buffer_first_tok.dep) #GOOD
+        add_feat(decision + ":B0PosDep=" + buffer_first_tok.pos + "&" + buffer_first_tok.dep) #GOOD
+        add_feat(decision + ":S0B0Dep=" + stack_head_tok.dep + "&" + buffer_first_tok.dep)
+        add_feat(decision + ":S0S1Dep=" + stack_head_tok.dep + "&" + stack_two_back_tok.dep)
+        add_feat(decision + ":S1S0B0Dep=" + stack_two_back_tok.dep + "&" + stack_head_tok.dep + "&" + buffer_first_tok.dep)
+        add_feat(decision + ":S0B0Word=" + stack_head_tok.word + "&" + buffer_first_tok.word)
+        add_feat(decision + ":S0S1Word=" + stack_head_tok.word + "&" + stack_two_back_tok.word)
+        add_feat(decision + ":S1S0B0Word=" + stack_two_back_tok.word + "&" + stack_head_tok.word + "&" + buffer_first_tok.word)
+
+
+        # add_feat(decision + ":S0WordPos=" + stack_head_tok.word + "&" + stack_head_tok.pos) #GOOD
+        # add_feat(decision + ":S1WordPos=" + stack_two_back_tok.word + "&" + stack_two_back_tok.pos) #BAD
+        # # add_feat(decision + ":S2WordPos=" + stack_three_back_tok.word + "&" + stack_three_back_tok.pos) #BAD
+
+        # add_feat(decision + ":B0WordPos=" + buffer_first_tok.word + "&" + buffer_first_tok.pos) #GOOD
+        # add_feat(decision + ":B1WordPos=" + buffer_second_tok.word + "&" + buffer_second_tok.pos) #BAD
+
+        # add_feat(decision + ":S0Dep=" + stack_head_tok.dep) #GOOD
+        # add_feat(decision + ":S0WordDep=" + stack_head_tok.word + "&" + stack_head_tok.dep) #GOOD
+        # add_feat(decision + ":S0PosDep=" + stack_head_tok.pos + "&" + stack_head_tok.dep) #GOOD
+
+        # add_feat(decision + ":B0Dep=" + buffer_first_tok.dep) #GOOD
+        # # add_feat(decision + ":B0WordDep=" + buffer_first_tok.word + "&" + buffer_first_tok.dep) #GOOD
+        # add_feat(decision + ":B0PosDep=" + buffer_first_tok.pos + "&" + buffer_first_tok.dep) #GOOD
+
+        # add_feat(decision + ":S0B0Dep=" + stack_head_tok.dep + "&" + buffer_first_tok.dep)
+        # add_feat(decision + ":S0S1Dep=" + stack_head_tok.dep + "&" + stack_two_back_tok.dep)
+        # add_feat(decision + ":S1S0B0Dep=" + stack_two_back_tok.dep + "&" + stack_head_tok.dep + "&" + buffer_first_tok.dep)
+
+        # add_feat(decision + ":B2WordPos=" + buffer_third_tok.word + "&" + buffer_third_tok.pos) #BAD
+
+        # add_feat(decision + ":S0B0Word=" + stack_head_tok.word + "&" + buffer_first_tok.word)
+        # add_feat(decision + ":S0S1Word=" + stack_head_tok.word + "&" + stack_two_back_tok.word)
+        # add_feat(decision + ":S1S0B0Word=" + stack_two_back_tok.word + "&" + stack_head_tok.word + "&" + buffer_first_tok.word)
+        # add_feat(decision + ":S0B0B1Word=" + stack_head_tok.word + "&" + buffer_first_tok.word + "&" + buffer_second_tok.word)
+
+    # if extension == True: #BAD
+    #     add_feat(decision + ":B0B1B2Pos=" + buffer_first_tok.pos + "&" + buffer_second_tok.pos + "&" + buffer_third_tok.pos)
+
     return feats
 
 

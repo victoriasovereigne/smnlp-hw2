@@ -20,8 +20,14 @@ if __name__ == '__main__':
     # print str(dev[5])
 
     # reduce training and dev data
-    train = train[:100] #[:1000]
-    # dev = dev[:100] #train
+    train = train[:1000]
+    # dev = dev #train
+
+    extension = True
+    mode = 'ADA'
+
+    print "EXTENSION:", extension
+    print "MODE:", mode
 
     # print train[0]
     # print dev[0]
@@ -43,7 +49,7 @@ if __name__ == '__main__':
             
     elif system_to_run == "GREEDY":
         start = time.time()
-        trained_model = train_greedy_model(train)
+        trained_model = train_greedy_model(train, extension=extension, mode=mode)
         end = time.time()
         print "Training time:", (end - start)
         
@@ -56,7 +62,7 @@ if __name__ == '__main__':
             print_output(test_decoded, "test.conllx.out")
     elif system_to_run == "BEAM":
         start = time.time()
-        trained_model = train_beamed_model(train)
+        trained_model = train_beamed_model(train, extension=extension, mode=mode)
         end = time.time()
         print "Training time:", (end - start)
 

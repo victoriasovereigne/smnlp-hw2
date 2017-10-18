@@ -1,0 +1,66 @@
+MODE: ADA
+Extracting features: 0 / 1000
+Extracting features: 100 / 1000
+Extracting features: 200 / 1000
+Extracting features: 300 / 1000
+Extracting features: 400 / 1000
+Extracting features: 500 / 1000
+Extracting features: 600 / 1000
+Extracting features: 700 / 1000
+Extracting features: 800 / 1000
+Extracting features: 900 / 1000
+Training: 0 / 1000
+Training: 100 / 1000
+Training: 200 / 1000
+Training: 300 / 1000
+Training: 400 / 1000
+Training: 500 / 1000
+Training: 600 / 1000
+Training: 700 / 1000
+Training: 800 / 1000
+Training: 900 / 1000
+Training: 0 / 1000
+Training: 100 / 1000
+Training: 200 / 1000
+Training: 300 / 1000
+Training: 400 / 1000
+Training: 500 / 1000
+Training: 600 / 1000
+Training: 700 / 1000
+Training: 800 / 1000
+Training: 900 / 1000
+Training: 0 / 1000
+Training: 100 / 1000
+Training: 200 / 1000
+Training: 300 / 1000
+Training: 400 / 1000
+Training: 500 / 1000
+Training: 600 / 1000
+Training: 700 / 1000
+Training: 800 / 1000
+Training: 900 / 1000
+Training: 0 / 1000
+Training: 100 / 1000
+Training: 200 / 1000
+Training: 300 / 1000
+Training: 400 / 1000
+Training: 500 / 1000
+Training: 600 / 1000
+Training: 700 / 1000
+Training: 800 / 1000
+Training: 900 / 1000
+Training: 0 / 1000
+Training: 100 / 1000
+Training: 200 / 1000
+Training: 300 / 1000
+Training: 400 / 1000
+Training: 500 / 1000
+Training: 600 / 1000
+Training: 700 / 1000
+Training: 800 / 1000
+Training: 900 / 1000
+BEAM SIZE: 10
+NUM OF EPOCHS: 5
+Training time: 456.587933064
+Parsing dev
+UAS: 28388/40117 = 70.76; LAS: 0/40117 = 0.00

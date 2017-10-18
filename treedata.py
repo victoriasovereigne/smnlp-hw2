@@ -3,11 +3,13 @@
 
 # Abstraction to bundle words with POS and chunks for featurization
 # pos = part-of-speech, cpos = coarse part-of-speech
+# dep = dependency label
 class Token:
-    def __init__(self, word, pos, cpos):
+    def __init__(self, word, pos, cpos ,dep):
         self.word = word
         self.pos = pos
         self.cpos = cpos
+        self.dep = dep
 
     def __repr__(self):
         return self.word
@@ -67,7 +69,7 @@ def read_data(file):
         if stripped != "":
             fields = stripped.split()
             if len(fields) == 10:
-                curr_tokens.append(Token(fields[1], fields[3], fields[4]))
+                curr_tokens.append(Token(fields[1], fields[3], fields[4], fields[7]))
                 if fields[6] != "_":
                     curr_deps.append(Dependency(int(fields[6]) - 1, fields[7]))
         elif stripped == "" and len(curr_tokens) > 0:

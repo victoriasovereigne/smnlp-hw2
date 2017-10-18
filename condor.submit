@@ -1,0 +1,16 @@
+################################################
+#
+# Project 2 Structured Model for NLP
+#
+################################################
++Group = "GRAD"
++Project = "INSTRUCTIONAL"
++ProjectDescription = "Project 2Condor Submit"
+
+universe = vanilla
+executable = parser.py
+arguments = GREEDY
+output = parser.output
+error = parser.error
+
+Queue
