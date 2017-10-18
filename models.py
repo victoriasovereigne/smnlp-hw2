@@ -451,7 +451,7 @@ def train_beamed_model(parsed_sentences, extension, mode='SGD'):
     label_indexer = get_label_indexer()
     gold_decisions = []
     gold_states = []
-    beam_size = 10
+    beam_size = 8
 
     # ======================================================
     # get the gold decisions and gold states

@@ -20,10 +20,10 @@ if __name__ == '__main__':
     # print str(dev[5])
 
     # reduce training and dev data
-    train = train[:1000]
+    # train = train[:1000]
     # dev = dev #train
 
-    extension = True
+    extension = False #True
     mode = 'ADA'
 
     print "EXTENSION:", extension
